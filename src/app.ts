@@ -1,7 +1,12 @@
 import express, { type Request, type Response } from "express";
+import cors from "cors";
 import { supabase } from "./config/supabase";
 
 const app = express();
+
+app.use(cors({
+  origin: ["http://localhost:5173", "https://devquest-frontend-gray.vercel.app"],
+}));
 
 app.get("/health", async (req: Request, res: Response) => {
   try {
