@@ -1,0 +1,178 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  authId        String   @unique
+  goal          String?
+  currentLevel  String?
+  dailyHours    Int?
+  currentStreak Int      @default(0)
+  longestStreak Int      @default(0)
+  lastActiveDate DateTime?
+  role          String   @default("user")
+  createdAt     DateTime @default(now())
+
+  progress      UserProgress[]
+  xpEvents      XpEvent[]
+  achievements  UserAchievement[]
+  chatMessages  ChatMessage[]
+  roadmaps      Roadmap[]
+}
+
+model Region {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?
+  order       Int
+
+  chapters    Chapter[]
+}
+
+model Chapter {
+  id        String  @id @default(uuid())
+  title     String
+  order     Int
+  regionId  String
+  region    Region  @relation(fields: [regionId], references: [id])
+
+  topics    Topic[]
+}
+
+model Topic {
+  id              String   @id @default(uuid())
+  title           String
+  description     String?
+  difficulty      Int
+  baseXp          Int
+  estimatedHours  Float
+  exercisePrompt  String?
+  exerciseFiles   Json?
+  chapterId       String
+  chapter         Chapter  @relation(fields: [chapterId], references: [id])
+
+  prerequisites   TopicPrerequisite[] @relation("TopicToPrereq")
+  requiredBy      TopicPrerequisite[] @relation("PrereqToTopic")
+  resources       TopicResource[]
+  progress        UserProgress[]
+  roadmapEntries  RoadmapEntry[]
+}
+
+model TopicPrerequisite {
+  id               String @id @default(uuid())
+  topicId          String
+  prerequisiteId   String
+  topic            Topic  @relation("TopicToPrereq", fields: [topicId], references: [id])
+  prerequisite     Topic  @relation("PrereqToTopic", fields: [prerequisiteId], references: [id])
+
+  @@unique([topicId, prerequisiteId])
+}
+
+model Resource {
+  id        String   @id @default(uuid())
+  title     String
+  url       String
+  type      String
+  platform  String
+  duration  Int?
+
+  topics    TopicResource[]
+}
+
+model TopicResource {
+  id         String   @id @default(uuid())
+  topicId    String
+  resourceId String
+  rank       Int      @default(0)
+  topic      Topic    @relation(fields: [topicId], references: [id])
+  resource   Resource @relation(fields: [resourceId], references: [id])
+
+  @@unique([topicId, resourceId])
+}
+
+model Roadmap {
+  id        String   @id @default(uuid())
+  userId    String
+  goal      String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+
+  entries   RoadmapEntry[]
+}
+
+model RoadmapEntry {
+  id           String   @id @default(uuid())
+  roadmapId    String
+  topicId      String
+  order        Int
+  targetDate   DateTime?
+  roadmap      Roadmap  @relation(fields: [roadmapId], references: [id])
+  topic        Topic    @relation(fields: [topicId], references: [id])
+}
+
+model UserProgress {
+  id          String    @id @default(uuid())
+  userId      String
+  topicId     String
+  status      String    @default("locked")
+  startedAt   DateTime?
+  completedAt DateTime?
+  attempts    Int       @default(0)
+  user        User      @relation(fields: [userId], references: [id])
+  topic       Topic     @relation(fields: [topicId], references: [id])
+
+  @@unique([userId, topicId])
+  @@index([userId])
+}
+
+model XpEvent {
+  id         String   @id @default(uuid())
+  userId     String
+  sourceType String
+  sourceId   String?
+  amount     Int
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+}
+
+model Achievement {
+  id            String   @id @default(uuid())
+  title         String
+  description   String
+  triggerType   String
+  triggerValue  Int
+
+  users         UserAchievement[]
+}
+
+model UserAchievement {
+  id            String      @id @default(uuid())
+  userId        String
+  achievementId String
+  unlockedAt    DateTime    @default(now())
+  user          User        @relation(fields: [userId], references: [id])
+  achievement   Achievement @relation(fields: [achievementId], references: [id])
+
+  @@unique([userId, achievementId])
+}
+
+model ChatMessage {
+  id            String   @id @default(uuid())
+  userId        String
+  role          String
+  content       String
+  relatedTopicId String?
+  createdAt     DateTime @default(now())
+  user          User     @relation(fields: [userId], references: [id])
+}
