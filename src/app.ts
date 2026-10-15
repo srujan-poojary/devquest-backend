@@ -132,24 +132,19 @@ app.get("/", (req: Request, res: Response) => {
 
 app.get("/health", async (req: Request, res: Response) => {
   try {
-    const { data, error } = await supabase
-      .from("health_check")
-      .select("*")
-      .limit(1)
-      .single();
-
-    if (error) {
-      throw error;
-    }
-
+    const topicCount = await prisma.topic.count();
     res.json({
       status: "ok",
       timestamp: new Date().toISOString(),
-      dbMessage: data.message,
+      database: "connected",
+      topics: topicCount,
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error("Health check DB query failed:", err);
-    res.status(500).json({ status: "error", message: "Database check failed" });
+    res.status(500).json({
+      status: "error",
+      message: err?.message || "Database check failed",
+    });
   }
 });
 
@@ -158,6 +153,68 @@ import { createRoadmapForUser } from "./services/roadmap.service";
 
 import { authMiddleware, type AuthenticatedRequest } from "./middlewares/auth.middleware";
 
+async function ensureUserExists(authId: string, email?: string) {
+  // If email is missing or empty, attempt to resolve via Supabase auth admin
+  let resolvedEmail = email?.trim();
+  if (!resolvedEmail || !resolvedEmail.includes("@")) {
+    try {
+      const { data: userData } = await supabase.auth.admin.getUserById(authId);
+      if (userData?.user?.email) {
+        resolvedEmail = userData.user.email;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // Safe fallback email if user has a private GitHub email
+  const safeEmail = resolvedEmail && resolvedEmail.includes("@")
+    ? resolvedEmail
+    : `user_${authId.substring(0, 8)}@devquest.local`;
+
+  // 1. Check if user exists by authId
+  let user = await prisma.user.findUnique({
+    where: { authId },
+  });
+
+  if (user) {
+    // If real email became available and differs from placeholder, update it
+    if (resolvedEmail && resolvedEmail.includes("@") && user.email !== resolvedEmail) {
+      const emailTaken = await prisma.user.findUnique({ where: { email: resolvedEmail } });
+      if (!emailTaken) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { email: resolvedEmail },
+        });
+      }
+    }
+    return user;
+  }
+
+  // 2. Check if a user with this email exists (e.g. earlier email signup or same email across OAuth providers)
+  if (resolvedEmail && resolvedEmail.includes("@")) {
+    const existingByEmail = await prisma.user.findUnique({
+      where: { email: resolvedEmail },
+    });
+    if (existingByEmail) {
+      // Link the new authId to this existing user record
+      return prisma.user.update({
+        where: { id: existingByEmail.id },
+        data: { authId },
+      });
+    }
+  }
+
+  // 3. Create fresh user record safely
+  return prisma.user.create({
+    data: {
+      authId,
+      email: safeEmail,
+      avatar: "🧙‍♂️",
+    },
+  });
+}
+
 app.post("/roadmap/generate", authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { goal, dailyHours, deadline, currentLevel, learningStyle, target } = req.body;
@@ -165,7 +222,7 @@ app.post("/roadmap/generate", authMiddleware, async (req: AuthenticatedRequest, 
       return res.status(400).json({ error: "goal and dailyHours are required" });
     }
 
-    const user = await ensureUserExists(req.userId!, req.userEmail!);
+    const user = await ensureUserExists(req.userId!, req.userEmail);
 
     await prisma.user.update({
       where: { id: user.id },
@@ -182,20 +239,14 @@ app.post("/roadmap/generate", authMiddleware, async (req: AuthenticatedRequest, 
     );
 
     res.json(result);
-  } catch (err) {
+  } catch (err: any) {
     console.error("Roadmap generation failed:", err);
-    res.status(500).json({ error: "Failed to generate roadmap" });
+    res.status(500).json({
+      error: "Failed to generate roadmap",
+      details: err?.message || "Unknown error",
+    });
   }
 });
-
-
-async function ensureUserExists(authId: string, email: string) {
-  return prisma.user.upsert({
-    where: { authId },
-    update: {},
-    create: { authId, email },
-  });
-}
 
 app.post("/quests/:topicId/complete", authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -204,7 +255,7 @@ app.post("/quests/:topicId/complete", authMiddleware, async (req: AuthenticatedR
       return res.status(400).json({ error: "topicId is required" });
     }
 
-    const user = await ensureUserExists(req.userId!, req.userEmail!);
+    const user = await ensureUserExists(req.userId!, req.userEmail);
     const result = await completeQuest(user.id, topicId);
     res.json(result);
   } catch (err: any) {
@@ -214,7 +265,7 @@ app.post("/quests/:topicId/complete", authMiddleware, async (req: AuthenticatedR
 });
 app.get("/me/stats", authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const user = await ensureUserExists(req.userId!, req.userEmail!);
+    const user = await ensureUserExists(req.userId!, req.userEmail);
 
     const xpEvents = await prisma.xpEvent.findMany({ where: { userId: user.id } });
     const totalXp = xpEvents.reduce((sum, e) => sum + e.amount, 0);
@@ -238,7 +289,7 @@ app.get("/me/stats", authMiddleware, async (req: AuthenticatedRequest, res: Resp
 
 app.get("/me/progress", authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const user = await ensureUserExists(req.userId!, req.userEmail!);
+    const user = await ensureUserExists(req.userId!, req.userEmail);
     const progress = await prisma.userProgress.findMany({
       where: { userId: user.id },
     });
@@ -251,7 +302,7 @@ app.get("/me/progress", authMiddleware, async (req: AuthenticatedRequest, res: R
 
 app.get("/me/achievements", authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const user = await ensureUserExists(req.userId!, req.userEmail!);
+    const user = await ensureUserExists(req.userId!, req.userEmail);
     const achievements = await getUserAchievementsWithProgress(user.id);
     res.json(achievements);
   } catch (err) {
@@ -262,7 +313,7 @@ app.get("/me/achievements", authMiddleware, async (req: AuthenticatedRequest, re
 
 app.get("/me/account", authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const user = await ensureUserExists(req.userId!, req.userEmail!);
+    const user = await ensureUserExists(req.userId!, req.userEmail);
     const roadmap = await prisma.roadmap.findFirst({
       where: { userId: user.id },
       orderBy: { createdAt: "desc" },
@@ -292,16 +343,16 @@ app.get("/me/account", authMiddleware, async (req: AuthenticatedRequest, res: Re
       targetFinishDate,
       isOnboarded: Boolean(hasRoadmap || user.goal),
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error("Fetch me account failed:", err);
-    res.status(500).json({ error: "Failed to fetch account info" });
+    res.status(500).json({ error: "Failed to fetch account info", details: err?.message || "Unknown error" });
   }
 });
 
 app.put("/me/profile", authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { name, avatar, goal, dailyHours } = req.body;
-    const user = await ensureUserExists(req.userId!, req.userEmail!);
+    const user = await ensureUserExists(req.userId!, req.userEmail);
 
     const updateData: { name?: string | null; avatar?: string; goal?: string; dailyHours?: number } = {};
     if (name !== undefined) {
@@ -356,7 +407,7 @@ app.put("/me/profile", authMiddleware, async (req: AuthenticatedRequest, res: Re
 
 app.get("/me/bounty", authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const user = await ensureUserExists(req.userId!, req.userEmail!);
+    const user = await ensureUserExists(req.userId!, req.userEmail);
     const bounty = await getTodayBounty(user.id);
     res.json(bounty);
   } catch (err) {
@@ -372,7 +423,7 @@ app.get("/topics/:topicId", authMiddleware, async (req: AuthenticatedRequest, re
       return res.status(400).json({ error: "topicId is required" });
     }
 
-    const user = await ensureUserExists(req.userId!, req.userEmail!);
+    const user = await ensureUserExists(req.userId!, req.userEmail);
     const topic = await getTopicDetail(topicId);
     const progress = await prisma.userProgress.findUnique({
       where: { userId_topicId: { userId: user.id, topicId } },
@@ -387,7 +438,7 @@ app.get("/topics/:topicId", authMiddleware, async (req: AuthenticatedRequest, re
 
 app.get("/roadmap/latest", authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const user = await ensureUserExists(req.userId!, req.userEmail!);
+    const user = await ensureUserExists(req.userId!, req.userEmail);
     const roadmap = await getLatestRoadmap(user.id);
     res.json(roadmap);
   } catch (err) {
@@ -398,7 +449,7 @@ app.get("/roadmap/latest", authMiddleware, async (req: AuthenticatedRequest, res
 
 app.post("/mentor/chat", authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const user = await ensureUserExists(req.userId!, req.userEmail!);
+    const user = await ensureUserExists(req.userId!, req.userEmail);
     const { message, topicId, topicTitle, exercisePrompt, userCode, failedCriteria, history } = req.body;
     if (!message || typeof message !== "string") {
       return res.status(400).json({ error: "message is required" });
@@ -424,7 +475,7 @@ app.post("/mentor/chat", authMiddleware, async (req: AuthenticatedRequest, res: 
 
 app.get("/me/analytics", authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const user = await ensureUserExists(req.userId!, req.userEmail!);
+    const user = await ensureUserExists(req.userId!, req.userEmail);
     const analytics = await getUserAnalytics(user.id);
     res.json(analytics);
   } catch (err) {
