@@ -1,4 +1,5 @@
 import "dotenv/config";
+import "./config/env";
 import express, { type Request, type Response } from "express";
 import cors from "cors";
 import { supabase } from "./config/supabase";
