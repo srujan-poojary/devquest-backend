@@ -35,6 +35,101 @@ app.use(cors({
   credentials: true,
 }));
 
+function renderOAuthBounceHtml(targetPath: string = "/") {
+  const frontendUrl = process.env.FRONTEND_URL || "https://devquest-frontend-gray.vercel.app";
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DevQuest - Teleporting...</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      background-color: #0b0b0e;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 24px;
+    }
+    .card {
+      background: rgba(18, 18, 26, 0.9);
+      border: 1px solid rgba(124, 92, 255, 0.3);
+      box-shadow: 0 0 50px rgba(124, 92, 255, 0.15);
+      border-radius: 16px;
+      padding: 36px 32px;
+      text-align: center;
+      max-width: 440px;
+      width: 100%;
+    }
+    .spinner {
+      width: 44px;
+      height: 44px;
+      border: 3px solid rgba(124, 92, 255, 0.2);
+      border-top-color: #7c5cff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 20px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    h2 {
+      font-size: 18px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      color: #ffffff;
+    }
+    p {
+      font-size: 13px;
+      color: #94a3b8;
+      margin: 0;
+      line-height: 1.5;
+    }
+  </style>
+  <script>
+    (function() {
+      try {
+        var isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        var frontendOrigin = isLocal ? 'http://localhost:5173' : ${JSON.stringify(frontendUrl)};
+        var currentPath = window.location.pathname;
+        var hash = window.location.hash || '';
+        var search = window.location.search || '';
+
+        var targetPath = ${JSON.stringify(targetPath)};
+        if ((currentPath === '/' || !currentPath) && hash.indexOf('access_token') !== -1) {
+          targetPath = '/onboarding';
+        } else if (currentPath && currentPath !== '/') {
+          targetPath = currentPath;
+        }
+
+        var destination = frontendOrigin + targetPath + search + hash;
+        window.location.replace(destination);
+      } catch (err) {
+        window.location.href = 'http://localhost:5173';
+      }
+    })();
+  </script>
+</head>
+<body>
+  <div class="card">
+    <div class="spinner"></div>
+    <h2>⚔️ Teleporting to DevQuest Realm...</h2>
+    <p>Authenticating adventurer credentials and unlocking quest portal.</p>
+  </div>
+</body>
+</html>`;
+}
+
+app.get("/", (req: Request, res: Response) => {
+  res.send(renderOAuthBounceHtml("/onboarding"));
+});
+
 app.get("/health", async (req: Request, res: Response) => {
   try {
     const { data, error } = await supabase
@@ -336,6 +431,14 @@ app.get("/me/analytics", authMiddleware, async (req: AuthenticatedRequest, res: 
     console.error("Fetch analytics failed:", err);
     res.status(500).json({ error: "Failed to fetch analytics" });
   }
+});
+
+app.use((req: Request, res: Response) => {
+  if (req.method === "GET" && req.accepts("html")) {
+    const targetPath = req.path === "/" ? "/onboarding" : req.path;
+    return res.send(renderOAuthBounceHtml(targetPath));
+  }
+  return res.status(404).json({ error: "Route not found" });
 });
 
 app.listen(PORT, () => {
