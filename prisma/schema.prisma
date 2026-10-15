@@ -12,6 +12,8 @@ model User {
   id            String   @id @default(uuid())
   email         String   @unique
   authId        String   @unique
+  name          String?
+  avatar        String?  @default("🧙‍♂️")
   goal          String?
   currentLevel  String?
   dailyHours    Int?
